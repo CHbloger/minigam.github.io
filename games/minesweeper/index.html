@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>추억의 지뢰 찾기</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f0f2f5;
+            color: #333;
+            font-family: 'Noto Sans KR', sans-serif;
+            overflow: hidden;
+        }
+        .game-container {
+            background-color: white;
+            border-radius: 15px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            padding: 20px;
+            text-align: center;
+            margin: 20px;
+            max-width: 90%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #minesweeperCanvas {
+            border: 2px solid #ccc;
+            background-color: #e0e0e0;
+            cursor: pointer;
+            display: block;
+            touch-action: manipulation;
+        }
+        .info-panel {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+            color: #555;
+            flex-wrap: wrap;
+        }
+        .info-item {
+            padding: 5px 10px;
+            background-color: #eee;
+            border-radius: 8px;
+            margin: 5px;
+        }
+        .button-group {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        .button-group button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1em;
+            transition: background-color 0.3s ease, transform 0.2s ease;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .button-group button:hover {
+            background-color: #0056b3;
+            transform: translateY(-2px);
+        }
+        #message-box {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 1000;
+            display: none;
+            font-size: 1.5em;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            max-width: 80%;
+        }
+        .difficulty-buttons button {
+            background-color: #28a745;
+            margin: 5px;
+        }
+        .difficulty-buttons button:hover {
+            background-color: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1>추억의 지뢰 찾기</h1>
+        <div class="info-panel">
+            <div class="info-item">지뢰: <span id="minesCount"></span></div>
+            <div class="info-item">시간: <span id="timer">0</span>초</div>
+        </div>
+        <canvas id="minesweeperCanvas"></canvas>
+        <div class="button-group">
+            <div class="difficulty-buttons">
+                <button onclick="startGame(9, 9, 10)">쉬움</button>
+                <button onclick="startGame(16, 16, 40)">보통</button>
+                <button onclick="startGame(16, 30, 99)">어려움</button>
+            </div>
+            <button onclick="document.location.href='../../index.html'">홈으로 돌아가기</button>
+        </div>
+    </div>
+
+    <div id="message-box"></div>
+
+    <script>
+        const canvas = document.getElementById('minesweeperCanvas');
+        const ctx = canvas.getContext('2d');
+        const minesCountDisplay = document.getElementById('minesCount');
+        const timerDisplay = document.getElementById('timer');
+        const messageBox = document.getElementById('message-box');
+
+        let board = [];
+        let rows = 9;
+        let cols = 9;
+        let mines = 10;
+        let cellSize = 30;
+        let revealedCells = 0;
+        let gameStarted = false;
+        let gameOver = false;
+        let timerInterval;
+        let timeElapsed = 0;
+        let flagsPlaced = 0;
+
+        const UNREVEALED = 0;
+        const REVEALED = 1;
+        const FLAGGED = 2;
+        const MINE = -1;
+
+        function showMessageBox(message) {
+            messageBox.textContent = message;
+            messageBox.style.display = 'block';
+            clearInterval(timerInterval);
+            setTimeout(() => {
+                messageBox.style.display = 'none';
+            }, 3000);
+        }
+
+        function createBoard() {
+            board = Array(rows).fill(null).map(() =>
+                Array(cols).fill(null).map(() => ({
+                    value: 0,
+                    status: UNREVEALED
+                }))
+            );
+            revealedCells = 0;
+            flagsPlaced = 0;
+            gameOver = false;
+            gameStarted = false;
+            timeElapsed = 0;
+            clearInterval(timerInterval);
+            timerDisplay.textContent = '0';
+        }
+
+        function placeMines(initialRow, initialCol) {
+            let placedMines = 0;
+            while (placedMines < mines) {
+                const r = Math.floor(Math.random() * rows);
+                const c = Math.floor(Math.random() * cols);
+
+                if (board[r][c].value !== MINE && !(r === initialRow && c === initialCol)) {
+                    board[r][c].value = MINE;
+                    placedMines++;
+                }
+            }
+            calculateNeighborMines();
+        }
+
+        function calculateNeighborMines() {
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (board[r][c].value === MINE) {
+                        for (let dr = -1; dr <= 1; dr++) {
+                            for (let dc = -1; dc <= 1; dc++) {
+                                if (dr === 0 && dc === 0) continue;
+                                const nr = r + dr;
+                                const nc = c + dc;
+                                if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc].value !== MINE) {
+                                    board[nr][nc].value++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        function drawBoard() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const cell = board[r][c];
+                    const x = c * cellSize;
+                    const y = r * cellSize;
+
+                    ctx.beginPath();
+                    ctx.rect(x, y, cellSize, cellSize);
+
+                    if (cell.status === REVEALED) {
+                        ctx.fillStyle = '#D3D3D3';
+                        ctx.fill();
+                        ctx.strokeStyle = '#999999';
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+
+                        if (cell.value === MINE) {
+                            ctx.fillStyle = 'red';
+                            ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize / 3, 0, Math.PI * 2);
+                            ctx.fill();
+                        } else if (cell.value > 0) {
+                            const colors = ['transparent', 'blue', 'green', 'red', 'darkblue', 'brown', 'cadetblue', 'black', 'grey'];
+                            ctx.fillStyle = colors[cell.value] || 'black';
+                            ctx.font = `${cellSize * 0.6}px Arial`;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(cell.value, x + cellSize / 2, y + cellSize / 2);
+                        }
+                    } else {
+                        ctx.fillStyle = '#C0C0C0';
+                        ctx.fill();
+                        ctx.strokeStyle = '#7B7B7B';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+
+                        if (cell.status === FLAGGED) {
+                            ctx.fillStyle = 'red';
+                            ctx.font = `${cellSize * 0.7}px Arial`;
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText('🚩', x + cellSize / 2, y + cellSize / 2);
+                        }
+                    }
+                    ctx.closePath();
+                }
+            }
+            minesCountDisplay.textContent = mines - flagsPlaced;
+        }
+
+        function revealCell(row, col) {
+            if (row < 0 || row >= rows || col < 0 || col >= cols || board[row][col].status === REVEALED || board[row][col].status === FLAGGED) {
+                return;
+            }
+
+            board[row][col].status = REVEALED;
+            revealedCells++;
+
+            if (board[row][col].value === MINE) {
+                gameOver = true;
+                revealAllMines();
+                drawBoard();
+                showMessageBox('게임 오버! 💣');
+                return;
+            }
+
+            if (board[row][col].value === 0) {
+                for (let dr = -1; dr <= 1; dr++) {
+                    for (let dc = -1; dc <= 1; dc++) {
+                        if (dr === 0 && dc === 0) continue;
+                        revealCell(row + dr, col + dc);
+                    }
+                }
+            }
+
+            if (revealedCells === (rows * cols) - mines) {
+                gameOver = true;
+                drawBoard();
+                showMessageBox('승리! 🎉');
+            }
+        }
+
+        function revealAllMines() {
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (board[r][c].value === MINE) {
+                        board[r][c].status = REVEALED;
+                    }
+                }
+            }
+        }
+
+        function handleLeftClick(event) {
+            if (gameOver) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clientX = (event.clientX - rect.left) * scaleX;
+            const clientY = (event.clientY - rect.top) * scaleY;
+
+            const row = Math.floor(clientY / cellSize);
+            const col = Math.floor(clientX / cellSize);
+
+            if (row < 0 || row >= rows || col < 0 || col >= cols) return;
+
+            if (!gameStarted) {
+                placeMines(row, col);
+                gameStarted = true;
+                startTimer();
+            }
+
+            revealCell(row, col);
+            drawBoard();
+        }
+
+        function handleRightClick(event) {
+            event.preventDefault();
+            if (gameOver || !gameStarted) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clientX = (event.clientX - rect.left) * scaleX;
+            const clientY = (event.clientY - rect.top) * scaleY;
+
+            const row = Math.floor(clientY / cellSize);
+            const col = Math.floor(clientX / cellSize);
+
+            if (row < 0 || row >= rows || col < 0 || col >= cols) return;
+
+            const cell = board[row][col];
+            if (cell.status === UNREVEALED) {
+                cell.status = FLAGGED;
+                flagsPlaced++;
+            } else if (cell.status === FLAGGED) {
+                cell.status = UNREVEALED;
+                flagsPlaced--;
+            }
+            drawBoard();
+        }
+
+        let touchTimer;
+        let longPressThreshold = 500; // ms
+
+        function handleTouchStart(event) {
+            if (event.touches.length === 1) {
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                const clientX = (event.touches[0].clientX - rect.left) * scaleX;
+                const clientY = (event.touches[0].clientY - rect.top) * scaleY;
+
+                const row = Math.floor(clientY / cellSize);
+                const col = Math.floor(clientX / cellSize);
+
+                touchTimer = setTimeout(() => {
+                    handleLongPress(row, col);
+                    touchTimer = null;
+                }, longPressThreshold);
+            }
+        }
+
+        function handleTouchEnd(event) {
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+
+                if (!gameOver) {
+                    const rect = canvas.getBoundingClientRect();
+                    const scaleX = canvas.width / rect.width;
+                    const scaleY = canvas.height / rect.height;
+                    const clientX = (event.changedTouches[0].clientX - rect.left) * scaleX;
+                    const clientY = (event.changedTouches[0].clientY - rect.top) * scaleY;
+
+                    const row = Math.floor(clientY / cellSize);
+                    const col = Math.floor(clientX / cellSize);
+                    if (row >= 0 && row < rows && col >= 0 && col < cols) {
+                        if (!gameStarted) {
+                            placeMines(row, col);
+                            gameStarted = true;
+                            startTimer();
+                        }
+                        revealCell(row, col);
+                        drawBoard();
+                    }
+                }
+            }
+        }
+
+        function handleTouchMove(event) {
+            if (touchTimer) {
+                clearTimeout(touchTimer);
+                touchTimer = null;
+            }
+        }
+
+        function handleLongPress(row, col) {
+            if (gameOver || !gameStarted) return;
+            const cell = board[row][col];
+            if (cell.status === UNREVEALED) {
+                cell.status = FLAGGED;
+                flagsPlaced++;
+            } else if (cell.status === FLAGGED) {
+                cell.status = UNREVEALED;
+                flagsPlaced--;
+            }
+            drawBoard();
+        }
+
+
+        function startTimer() {
+            clearInterval(timerInterval);
+            timeElapsed = 0;
+            timerDisplay.textContent = '0';
+            timerInterval = setInterval(() => {
+                timeElapsed++;
+                timerDisplay.textContent = timeElapsed;
+            }, 1000);
+        }
+
+        function resizeCanvas() {
+            const gameContainer = document.querySelector('.game-container');
+            const containerWidth = gameContainer.clientWidth - 40;
+            const containerHeight = window.innerHeight * 0.7;
+
+            let newCellSize = Math.min(Math.floor(containerWidth / cols), Math.floor(containerHeight / rows), 40);
+            cellSize = Math.max(newCellSize, 20);
+
+            canvas.width = cols * cellSize;
+            canvas.height = rows * cellSize;
+
+            drawBoard();
+        }
+
+        function startGame(newRows, newCols, newMines) {
+            rows = newRows;
+            cols = newCols;
+            mines = newMines;
+            createBoard();
+            resizeCanvas();
+        }
+
+        canvas.addEventListener('click', handleLeftClick);
+        canvas.addEventListener('contextmenu', handleRightClick);
+        canvas.addEventListener('touchstart', handleTouchStart, { passive: true });
+        canvas.addEventListener('touchend', handleTouchEnd, { passive: true });
+        canvas.addEventListener('touchmove', handleTouchMove, { passive: true });
+
+        window.addEventListener('resize', resizeCanvas);
+        window.addEventListener('load', () => {
+            startGame(9, 9, 10);
+        });
+    </script>
+</body>
+</html>
